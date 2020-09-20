@@ -1,0 +1,15 @@
+server:
+  port: 9009
+
+spring:
+  rabbitmq:
+    host: 106.1x.xxx.229
+    username: dev
+    password: 123456
+    virtual-host: /dev
+    listener:
+      simple: #simple|简单模式 workqueues|工作队列
+        acknowledge-mode: MANUAL #手动确认
+        prefetch: 1 #每个使用者可以处理的未确认消息的最大数量,相当于prefetchCount =1
+      direct: #fanout|发布订阅模式 direct|路由模式 topic|主题模式
+        acknowledge-mode: MANUAL #手动确认

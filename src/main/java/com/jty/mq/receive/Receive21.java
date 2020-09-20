@@ -41,12 +41,12 @@ public class Receive21 {
             System.out.println(" [x] Received '" + message + "'");
             try {
                 doWork(message);
+                //手动确认消息 multiple=false,不批量处理
+                channel.basicAck(delivery.getEnvelope().getDeliveryTag(), false);
             } catch (Exception e) {
                 channel.basicNack(delivery.getEnvelope().getDeliveryTag(),false,false);
             } finally {
                 System.out.println(" [x] Done");
-                //手动确认消息
-                channel.basicAck(delivery.getEnvelope().getDeliveryTag(), false);
             }
         };
         channel.basicConsume(QUEUE_NAME2, false, deliverCallback02, consumerTag -> {

@@ -254,15 +254,15 @@ public class Receive20 {
             String message = new String(delivery.getBody(), "UTF-8");
 
             System.out.println(" [x] Received '" + message + "'");
-            try {
-                doWork(message);
-            } catch (Exception e) {
-                    channel.basicNack(delivery.getEnvelope().getDeliveryTag(),false,false);
-            } finally {
-                System.out.println(" [x] Done");
-                //手动确认消息 multiple=false,不批量处理
-                channel.basicAck(delivery.getEnvelope().getDeliveryTag(), false);
-            }
+             try {
+                            doWork(message);
+                            //手动确认消息 multiple=false,不批量处理
+                            channel.basicAck(delivery.getEnvelope().getDeliveryTag(), false);
+                        } catch (Exception e) {
+                                channel.basicNack(delivery.getEnvelope().getDeliveryTag(),false,false);
+                        } finally {
+                            System.out.println(" [x] Done");
+                        }
         };
         /** autoAck=true 手动确认，此时channel.basicQos(0)生效 */
         channel.basicConsume(QUEUE_NAME2, false, deliverCallback02, consumerTag -> {
@@ -549,3 +549,379 @@ public class Receive50 {
 消费者
 ![](src/images/1911127-20200920034631317-483924475.png)
 ![](src/images/1911127-20200920034640278-1349873126.png)
+
+
+##### SpringBoot整合RabbitMQ
+
+- RabbitTemplate类用于发送消息
+- @RabbitHandler 标注接受消息的方法
+- @RabbitListener用于监听消息
+- @QueueBinding 定义队列绑定器
+- @Queue 定义队列
+- @Exchange 定义交换器
+- RabbitProperties 配置参数 spring-boot-autoconfigure-2.2.5.RELEASE.jar!/org/springframework/boot/autoconfigure/amqp/RabbitProperties.class
+- ExchangeTypes 交换器类型 \org\springframework\amqp\spring-amqp\2.2.5.RELEASE\spring-amqp-2.2.5.RELEASE.jar!\org\springframework\amqp\core\ExchangeTypes
+- 其中@RabbitListener、QueueBinding 、@Queue、@Exchange 均可定义多个参数
+```
+@RabbitHandler
+@RabbitListener(
+            bindings = @QueueBinding(value = @Queue(value = "bootTopic2",
+                    autoDelete = "true", durable = "false"),
+                    exchange = @Exchange(value = "bootTopic", type = ExchangeTypes.TOPIC),
+                    key="r.k.#"))
+public void getTopic2(Message message, Channel channel) throws IOException {
+//...
+}
+```
+
+`pom.xml`
+```
+...
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-amqp</artifactId>
+        </dependency>
+...
+```
+`application.xml`
+```
+server:
+  port: 9009
+
+spring:
+  rabbitmq:
+    host: 106.xx.xxx.229
+    username: dev
+    password: 123456
+    virtual-host: /dev
+    listener:
+      simple: #simple|简单模式 workqueues|工作队列
+        acknowledge-mode: MANUAL #手动确认
+        prefetch: 1 #每个使用者可以处理的未确认消息的最大数量,相当于prefetchCount =1
+      direct: #fanout|发布订阅模式 direct|路由模式 topic|主题模式
+        acknowledge-mode: MANUAL #手动确认
+```
+自动配置spring-boot-autoconfigure-2.2.5.RELEASE.jar!/org/springframework/boot/autoconfigure/amqp/RabbitAutoConfiguration.class
+配置参数于 spring-boot-autoconfigure-2.2.5.RELEASE.jar!/org/springframework/boot/autoconfigure/amqp/RabbitProperties.class
+![](https://img2020.cnblogs.com/blog/1911127/202009/1911127-20200920054038777-1464093282.png)
+
+生产者`BootSend.java`
+```
+/**
+* RabbitTemplate Spring提供用于发送消息的模板对象，rabbitTemplate自动注入
+*/
+@RestController
+public class BootSend {
+    @Autowired
+    private RabbitTemplate rabbitTemplate;
+
+    /** 简单队列 */
+    @GetMapping(value = "testSimple")
+    public void testSimple() {
+        rabbitTemplate.convertAndSend("hello", "Simple Hello world!");
+    }
+    /** 工作队列 */
+    @GetMapping(value = "/testWork")
+    public void testWork() {
+        for (int i = 0; i < 20; i++) {
+            String message = "m" + i;
+
+            if (i == 10) {
+                message = "m." + i;
+            }
+            rabbitTemplate.convertAndSend("bootWorkQueues", message);
+            System.out.println(" [x] Sent '" + message + "'");
+        }
+    }
+    /** routingKey 为空*/
+    @GetMapping(value = "/testFanout")
+    public void testFanout() {
+        for (int i = 0; i < 20; i++) {
+            String message = "m" + i;
+
+            if (i == 10) {
+                message = "m." + i;
+            }
+            rabbitTemplate.convertAndSend("bootFanout","", message);
+            System.out.println(" [x] Sent '" + message + "'");
+        }
+    }
+    /** routingKey 不为空，随即为 1 2 3 */
+    @GetMapping(value = "/testDirect")
+    public void testDirect() {
+        String routingKey;
+        String message;
+        for (int i = 0; i < 20; i++) {
+
+            //定义routingKey
+            if (0 == i % 2) {
+                routingKey = "2";
+            } else if (0 == i % 3) {
+                routingKey = "3";
+            } else {
+                routingKey = "1";
+            }
+            message = routingKey + "---" + i;
+            rabbitTemplate.convertAndSend("bootDirect",routingKey, message);
+            System.out.println(" [x] Sent '" + routingKey + "':'" + message + "'");
+        }
+    }
+    /** routingKey 不为空，随即为 “r.k.2”或 “r.k.1” */
+    @GetMapping(value = "/testTopic")
+    public void testTopic() {
+        String routingKey;
+        String message;
+        for (int i = 0; i < 20; i++) {
+            //定义routingKey
+            if (0 == i % 2) {
+                routingKey = "r.k.2";
+            }  else {
+                routingKey = "r.k.1";
+            }
+            message = routingKey + "---" + i;
+            rabbitTemplate.convertAndSend("bootTopic",routingKey, message);
+            System.out.println(" [x] Sent '" + routingKey + "':'" + message + "'");
+        }
+    }
+}
+```
+消费者`BootReceive.java`
+```
+/**
+ * @author :jty
+ * @date :20-9-20
+ * @RabbitListener 该注解用于绑定或监听队列，使用queuesToDeclare定义并绑定队列
+ * @Queue 定义队列，可定义多个参数如name、durable、exclusive等
+ */
+@Component
+public class BootReceive {
+    /**
+     * 简单模式
+     */
+    @RabbitHandler
+    @RabbitListener(queuesToDeclare = @Queue(value = "hello", durable = "false"))
+    public void getSimple(Message message) throws UnsupportedEncodingException {
+        //业务逻辑
+        System.out.println("收到消息：" + new String(message.getBody(), "UTF-8"));
+    }
+
+    /**
+     * 工作队列
+     */
+    @RabbitHandler
+    @RabbitListener(queuesToDeclare = @Queue(value = "bootWorkQueues", durable = "false",autoDelete = "false"))
+    public void getWorkQ1(Message message, Channel channel) throws IOException {
+        String mes = new String(message.getBody(), "UTF-8");
+        try{
+            channel.basicQos(1);
+            //业务逻辑
+            if(mes.contains(".")) {
+                //针对m.10休眠10秒
+                Thread.sleep(10000);
+            }else {
+                //否则1秒
+                Thread.sleep(1000);
+            }
+            //手动确认
+            channel.basicAck(message.getMessageProperties().getDeliveryTag(), false);
+        }catch (Exception e){
+            //重入队列
+            channel.basicNack(message.getMessageProperties().getDeliveryTag(),false,false);
+        }finally {
+            //打印消息
+            System.out.println("[getWorkQ1]:"+mes);
+        }
+    }
+    /**
+     * 工作队列
+     */
+    @RabbitHandler
+    @RabbitListener(queuesToDeclare = @Queue(value = "bootWorkQueues", durable = "false",autoDelete = "false"))
+    public void getWorkQ2(Message message, Channel channel) throws IOException {
+        String mes = new String(message.getBody(), "UTF-8");
+        try{
+            channel.basicQos(1);
+            //业务逻辑
+            if(mes.contains(".")) {
+                //针对m.10休眠10秒
+                Thread.sleep(10000);
+            }else {
+                //否则1秒
+                Thread.sleep(1000);
+            }
+            //手动确认
+            channel.basicAck(message.getMessageProperties().getDeliveryTag(), false);
+        }catch (Exception e){
+            //重入队列
+            channel.basicNack(message.getMessageProperties().getDeliveryTag(),false,false);
+        }finally {
+            //打印消息
+            System.out.println("[getWorkQ2]:"+mes);
+        }
+    }
+    /**
+     * 发布订阅
+     * @Queue(value = "bootFanout1")
+     */
+    @RabbitHandler
+    @RabbitListener(
+            bindings = @QueueBinding(value = @Queue(value = "bootFanout1",
+                    autoDelete = "true", durable = "false"), exchange = @Exchange(value = "bootFanout", type = ExchangeTypes.FANOUT)))
+    public void getFanout1(Message message, Channel channel) throws IOException {
+        String mes = new String(message.getBody(), "UTF-8");
+        try{
+            //业务逻辑
+            //手动确认
+            channel.basicAck(message.getMessageProperties().getDeliveryTag(), false);
+        }catch (Exception e){
+            //重入队列
+            channel.basicNack(message.getMessageProperties().getDeliveryTag(),false,false);
+        }finally {
+            //打印消息
+            System.out.println("[getFanout1]:"+mes);
+        }
+    }
+    /**
+     * 发布订阅
+     * @Queue(value = "bootFanout2")
+     */
+    @RabbitHandler
+    @RabbitListener(
+            bindings = @QueueBinding(value = @Queue(value = "bootFanout2",
+                    autoDelete = "true", durable = "false"), exchange = @Exchange(value = "bootFanout", type = ExchangeTypes.FANOUT)))
+    public void getFanout2(Message message, Channel channel) throws IOException {
+        String mes = new String(message.getBody(), "UTF-8");
+        try{
+            //业务逻辑
+            //手动确认
+            channel.basicAck(message.getMessageProperties().getDeliveryTag(), false);
+        }catch (Exception e){
+            //重入队列
+            channel.basicNack(message.getMessageProperties().getDeliveryTag(),false,false);
+        }finally {
+            //打印消息
+            System.out.println("[getFanout2]:"+mes);
+        }
+    }
+    /**
+     * 路由模式
+     * @QueueBinding(key="1")
+     */
+    @RabbitHandler
+    @RabbitListener(
+            bindings = @QueueBinding(value = @Queue(value = "bootDirect1",
+                    autoDelete = "true", durable = "false"),
+                    exchange = @Exchange(value = "bootDirect", type = ExchangeTypes.DIRECT),
+            key="1"))
+    public void getDirect1(Message message, Channel channel) throws IOException {
+        String mes = new String(message.getBody(), "UTF-8");
+        try{
+            //业务逻辑
+            //手动确认
+            channel.basicAck(message.getMessageProperties().getDeliveryTag(), false);
+        }catch (Exception e){
+            //重入队列
+            channel.basicNack(message.getMessageProperties().getDeliveryTag(),false,false);
+        }finally {
+            //打印消息
+            System.out.println("[getDirect1]:"+mes);
+        }
+    }
+    /**
+     * 路由模式
+     * @QueueBinding(key="2")
+     */
+    @RabbitHandler
+    @RabbitListener(
+            bindings = @QueueBinding(value = @Queue(value = "bootDirect2",
+                    autoDelete = "true", durable = "false"),
+                    exchange = @Exchange(value = "bootDirect", type = ExchangeTypes.DIRECT),
+                    key="2"))
+    public void getDirect2(Message message, Channel channel) throws IOException {
+        String mes = new String(message.getBody(), "UTF-8");
+        try{
+            //业务逻辑
+            //手动确认
+            channel.basicAck(message.getMessageProperties().getDeliveryTag(), false);
+        }catch (Exception e){
+            //重入队列
+            channel.basicNack(message.getMessageProperties().getDeliveryTag(),false,false);
+        }finally {
+            //打印消息
+            System.out.println("[getDirect2]:"+mes);
+        }
+    }
+    /**
+     * 路由模式
+     * @QueueBinding(key="3")
+     */
+    @RabbitHandler
+    @RabbitListener(
+            bindings = @QueueBinding(value = @Queue(value = "bootDirect3",
+                    autoDelete = "true", durable = "false"),
+                    exchange = @Exchange(value = "bootDirect", type = ExchangeTypes.DIRECT),
+                    key="3"))
+    public void getDirect3(Message message, Channel channel) throws IOException {
+        String mes = new String(message.getBody(), "UTF-8");
+        try{
+            //业务逻辑
+            //手动确认
+            channel.basicAck(message.getMessageProperties().getDeliveryTag(), false);
+        }catch (Exception e){
+            //重入队列
+            channel.basicNack(message.getMessageProperties().getDeliveryTag(),false,false);
+        }finally {
+            //打印消息
+            System.out.println("[getDirect3]:"+mes);
+        }
+    }
+    /**
+     * 主题模式
+     * @QueueBinding(key="*.*.2") 接受末尾是2的消息
+     */
+    @RabbitHandler
+    @RabbitListener(
+            bindings = @QueueBinding(value = @Queue(value = "bootTopic1",
+                    autoDelete = "true", durable = "false"),
+                    exchange = @Exchange(value = "bootTopic", type = ExchangeTypes.TOPIC),
+                    key="*.*.2"))
+    public void getTopic1(Message message, Channel channel) throws IOException {
+        String mes = new String(message.getBody(), "UTF-8");
+        try{
+            //业务逻辑
+            //手动确认
+            channel.basicAck(message.getMessageProperties().getDeliveryTag(), false);
+        }catch (Exception e){
+            //重入队列
+            channel.basicNack(message.getMessageProperties().getDeliveryTag(),false,false);
+        }finally {
+            //打印消息
+            System.out.println("[getTopic1]:"+mes);
+        }
+    }
+    /**
+     * 主题模式
+     * @QueueBinding(key="r.k.#") 接受"r.k."开头的消息，无论末尾是什么
+     */
+    @RabbitHandler
+    @RabbitListener(
+            bindings = @QueueBinding(value = @Queue(value = "bootTopic2",
+                    autoDelete = "true", durable = "false"),
+                    exchange = @Exchange(value = "bootTopic", type = ExchangeTypes.TOPIC),
+                    key="r.k.#"))
+    public void getTopic2(Message message, Channel channel) throws IOException {
+        String mes = new String(message.getBody(), "UTF-8");
+        try {
+            //业务逻辑
+            //手动确认
+            channel.basicAck(message.getMessageProperties().getDeliveryTag(), false);
+        } catch (Exception e) {
+            //重入队列
+            channel.basicNack(message.getMessageProperties().getDeliveryTag(), false, false);
+        } finally {
+            //打印消息
+            System.out.println("[getTopic2]:" + mes);
+        }
+    }
+}
+```
